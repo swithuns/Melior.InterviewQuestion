@@ -1,89 +1,46 @@
 ﻿using Melior.InterviewQuestion.Data;
 using Melior.InterviewQuestion.Types;
 using System.Configuration;
+using System.Security.Principal;
 
 namespace Melior.InterviewQuestion.Services
 {
     public class PaymentService : IPaymentService
     {
+        private readonly string dataStoreType = ConfigurationManager.AppSettings["DataStoreType"];
+        //public as a workaround for testing, ideally this store would be passed via constructor (dependency injection) but I didn't want to alter the
+        //constructors props in case you were running it within a wider solution of your own, a better setup would be:
+        //private readonly IAccountDataStore _store;
+        //public PaymentService(IAccountDataStore store)
+        //{
+              //this._store = store; 
+        //}
+        // with backup handling once at a higher level
+        public IAccountDataStore store;
+        public PaymentService()
+        {
+            store = dataStoreType == "Backup" ? new BackupAccountDataStore() : new AccountDataStore();
+        }
+
+
+        public void UpdateBalance(decimal amount, Account account)
+        {
+            if (account == null) return;
+            account.Balance -= amount;
+            store.UpdateAccount(account);
+        }
+
+
+
         public MakePaymentResult MakePayment(MakePaymentRequest request)
         {
-            var dataStoreType = ConfigurationManager.AppSettings["DataStoreType"];
-
-            Account account = null;
-
-            if (dataStoreType == "Backup")
-            {
-                var accountDataStore = new BackupAccountDataStore();
-                account = accountDataStore.GetAccount(request.DebtorAccountNumber);
-            }
-            else
-            {
-                var accountDataStore = new AccountDataStore();
-                account = accountDataStore.GetAccount(request.DebtorAccountNumber);
-            }
+            Account account = store.GetAccount(request.DebtorAccountNumber);
 
             var result = new MakePaymentResult();
 
-            switch (request.PaymentScheme)
-            {
-                case PaymentScheme.Bacs:
-                    if (account == null)
-                    {
-                        result.Success = false;
-                    }
-                    else if (!account.AllowedPaymentSchemes.HasFlag(AllowedPaymentSchemes.Bacs))
-                    {
-                        result.Success = false;
-                    }
-                    break;
+            result.Success = account != null && (account.AllowedPaymentSchemes.Contains(request.PaymentScheme));
 
-                case PaymentScheme.FasterPayments:
-                    if (account == null)
-                    {
-                        result.Success = false;
-                    }
-                    else if (!account.AllowedPaymentSchemes.HasFlag(AllowedPaymentSchemes.FasterPayments))
-                    {
-                        result.Success = false;
-                    }
-                    else if (account.Balance < request.Amount)
-                    {
-                        result.Success = false;
-                    }
-                    break;
-
-                case PaymentScheme.Chaps:
-                    if (account == null)
-                    {
-                        result.Success = false;
-                    }
-                    else if (!account.AllowedPaymentSchemes.HasFlag(AllowedPaymentSchemes.Chaps))
-                    {
-                        result.Success = false;
-                    }
-                    else if (account.Status != AccountStatus.Live)
-                    {
-                        result.Success = false;
-                    }
-                    break;
-            }
-
-            if (result.Success)
-            {
-                account.Balance -= request.Amount;
-
-                if (dataStoreType == "Backup")
-                {
-                    var accountDataStore = new BackupAccountDataStore();
-                    accountDataStore.UpdateAccount(account);
-                }
-                else
-                {
-                    var accountDataStore = new AccountDataStore();
-                    accountDataStore.UpdateAccount(account);
-                }
-            }
+            if (result.Success) UpdateBalance(request.Amount, account);
 
             return result;
         }
